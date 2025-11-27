@@ -34,11 +34,4 @@ terraform apply -var-file="terraform.tfvars"
 ## Customization
 - `variables.tf` exposes options such as instance types, provider/consumer VPC CIDRs, and toggles for VPC Flow Logs and endpoint acceptance. Update `terraform.tfvars` to match your environment.
 
-## Next steps / Offerings
-I can help with any of the following if you want:
-- Create a Git commit and push the fixes introduced during the audit.
-- Make `private_dns_enabled` configurable by variable and document the behavior.
-- Harden the user-data scripts: install SSM/CloudWatch agents, create a non-root service user, and configure a minimal firewall.
-- Remove Terraform state files from Git history if they were accidentally committed (requires history rewriting).
 
-If you'd like me to do one of those tasks, tell me which and I'll proceed.
