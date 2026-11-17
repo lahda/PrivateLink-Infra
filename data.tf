@@ -7,8 +7,9 @@ data "aws_ami" "amazon_linux_2023" {
   owners      = ["amazon"]
 
   filter {
-    name   = "name"
-    values = ["al2023-ami-*-x86_64"]
+    name = "name"
+    # Standard AL2023 only: excludes the "minimal" and "ecs-hvm" variants
+    values = ["al2023-ami-2023.*-x86_64"]
   }
 
   filter {

@@ -1,29 +1,25 @@
 #!/bin/bash
 # Script d'initialisation pour API Server TechCorp
+#
+# Les subnets du VPC Provider sont privés, sans NAT ni accès Internet :
+# aucun "yum install" / "pip install" n'est possible ici. L'API utilise donc
+# uniquement la bibliothèque standard Python (python3 est préinstallé sur AL2023).
 
-# Mise à jour du système
-yum update -y
+exec >> /var/log/techcorp-api-install.log 2>&1
 
 # Debug info: injected variables from Terraform
-echo "LogGroup=${log_group_name} Region=${region}" >> /var/log/techcorp-api-install.log
-
-# Installation de Python et Flask
-yum install -y python3 python3-pip
-
-# Installation de Flask
-pip3 install flask
+echo "LogGroup=${log_group_name} Region=${region}"
 
 # Création du répertoire de l'application
 mkdir -p /opt/techcorp-api
-cd /opt/techcorp-api
 
 # Création de l'application API
 cat > /opt/techcorp-api/app.py << 'EOFAPP'
-from flask import Flask, jsonify, request
-import socket
 import datetime
-
-app = Flask(__name__)
+import json
+import socket
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 # Simule une base de données de transactions
 TRANSACTIONS_DB = [
@@ -33,84 +29,102 @@ TRANSACTIONS_DB = [
     {"id": "TXN-004", "client": "ClientD", "montant": 9800, "statut": "validé", "date": "2025-11-18"},
 ]
 
-@app.route('/')
-def home():
-    return jsonify({
+
+def home(query):
+    return 200, {
         "service": "TechCorp API Gateway",
         "version": "1.0.0",
         "department": "IT Production",
-        "status": "operational"
-    })
+        "status": "operational",
+    }
 
-@app.route('/health')
-def health():
-    return jsonify({
+
+def health(query):
+    return 200, {
         "status": "healthy",
         "hostname": socket.gethostname(),
         "timestamp": datetime.datetime.now().isoformat(),
-        "service": "TechCorp Internal API"
-    })
+        "service": "TechCorp Internal API",
+    }
 
-@app.route('/api/transactions', methods=['GET'])
-def get_transactions():
-    statut = request.args.get('statut')
-    
+
+def get_transactions(query):
+    statut = query.get("statut", [None])[0]
     if statut:
-        filtered = [t for t in TRANSACTIONS_DB if t['statut'] == statut]
-        transactions = filtered
+        transactions = [t for t in TRANSACTIONS_DB if t["statut"] == statut]
     else:
         transactions = TRANSACTIONS_DB
-    
-    return jsonify({
+    return 200, {
         "success": True,
         "count": len(transactions),
         "data": transactions,
         "server": socket.gethostname(),
-        "accessed_via": "AWS PrivateLink"
-    })
+        "accessed_via": "AWS PrivateLink",
+    }
 
-@app.route('/api/transactions/<transaction_id>', methods=['GET'])
+
 def get_transaction(transaction_id):
-    transaction = next((t for t in TRANSACTIONS_DB if t['id'] == transaction_id), None)
-    
+    transaction = next((t for t in TRANSACTIONS_DB if t["id"] == transaction_id), None)
     if transaction:
-        return jsonify({
-            "success": True,
-            "data": transaction,
-            "server": socket.gethostname()
-        })
-    else:
-        return jsonify({
-            "success": False,
-            "error": "Transaction non trouvée"
-        }), 404
+        return 200, {"success": True, "data": transaction, "server": socket.gethostname()}
+    return 404, {"success": False, "error": "Transaction non trouvée"}
 
-@app.route('/api/stats', methods=['GET'])
-def get_stats():
-    total_montant = sum(t['montant'] for t in TRANSACTIONS_DB)
-    valides = len([t for t in TRANSACTIONS_DB if t['statut'] == 'validé'])
-    
-    return jsonify({
+
+def get_stats(query):
+    total_montant = sum(t["montant"] for t in TRANSACTIONS_DB)
+    valides = len([t for t in TRANSACTIONS_DB if t["statut"] == "validé"])
+    return 200, {
         "success": True,
         "statistiques": {
             "total_transactions": len(TRANSACTIONS_DB),
             "transactions_validees": valides,
             "montant_total": total_montant,
-            "montant_moyen": total_montant / len(TRANSACTIONS_DB)
+            "montant_moyen": total_montant / len(TRANSACTIONS_DB),
         },
         "server": socket.gethostname(),
-        "department": "IT Production"
-    })
+        "department": "IT Production",
+    }
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=80, debug=False)
+
+ROUTES = {
+    "/": home,
+    "/health": health,
+    "/api/transactions": get_transactions,
+    "/api/stats": get_stats,
+}
+
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        url = urlparse(self.path)
+        path = url.path.rstrip("/") or "/"
+        query = parse_qs(url.query)
+
+        if path in ROUTES:
+            status, body = ROUTES[path](query)
+        elif path.startswith("/api/transactions/"):
+            status, body = get_transaction(path[len("/api/transactions/"):])
+        else:
+            status, body = 404, {"success": False, "error": "Not found"}
+
+        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+if __name__ == "__main__":
+    ThreadingHTTPServer(("0.0.0.0", 80), Handler).serve_forever()
 EOFAPP
 
 # Création d'un service systemd
 cat > /etc/systemd/system/techcorp-api.service << 'EOFSVC'
 [Unit]
 Description=TechCorp API Service
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -118,7 +132,7 @@ User=root
 WorkingDirectory=/opt/techcorp-api
 ExecStart=/usr/bin/python3 /opt/techcorp-api/app.py
 Restart=always
-RestartSec=10
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
@@ -126,7 +140,6 @@ EOFSVC
 
 # Activation et démarrage
 systemctl daemon-reload
-systemctl enable techcorp-api
-systemctl start techcorp-api
+systemctl enable --now techcorp-api
 
-echo "API TechCorp démarrée!" > /var/log/techcorp-api-install.log
+echo "API TechCorp démarrée!"

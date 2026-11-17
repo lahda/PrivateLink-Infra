@@ -15,9 +15,10 @@ resource "aws_vpc_endpoint" "api" {
   )
 }
 
-# Auto-accept endpoint connection (same account)
+# Accept the endpoint connection (same account) when the service requires acceptance.
+# When acceptance is not required, AWS accepts it automatically.
 resource "aws_vpc_endpoint_connection_accepter" "api" {
-  count = var.endpoint_acceptance_required ? 0 : 1
+  count = var.endpoint_acceptance_required ? 1 : 0
 
   vpc_endpoint_service_id = aws_vpc_endpoint_service.api.id
   vpc_endpoint_id         = aws_vpc_endpoint.api.id

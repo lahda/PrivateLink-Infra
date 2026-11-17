@@ -2,7 +2,8 @@ resource "aws_vpc_endpoint_service" "api" {
   acceptance_required        = var.endpoint_acceptance_required
   network_load_balancer_arns = [aws_lb.provider.arn]
 
-  allowed_principals = var.endpoint_acceptance_required ? [] : [
+  # The consumer account must always be allowed, otherwise the endpoint cannot be created
+  allowed_principals = [
     "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
   ]
 
